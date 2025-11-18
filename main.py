@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 # This program is dedicated to the public domain under the CC0 license.
-# Enhanced Telegram bot with improved /start command for money-making features.
-# Uses webhook for Render deployment.
+# Fixed Telegram bot webhook for Render deployment using pure Flask.
+# Simplified for stability without ASGI/WSGI conflicts.
 
-import asyncio
 import logging
 import os
+import threading
 from http import HTTPStatus
 
-import uvicorn
-from asgiref.wsgi import WsgiToAsgi
-from flask import Flask, Response, request
+from flask import Flask, request, Response
+import requests
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode
@@ -20,7 +19,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ContextTypes,
-    ExtBot,
 )
 
 # Enable logging
@@ -32,15 +30,18 @@ logger = logging.getLogger(__name__)
 # Configuration - Set these as environment variables on Render
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://your-app.onrender.com")
-PORT = int(os.environ.get("PORT", 8000))
+PORT = int(os.environ.get("PORT", 10000))  # Render default is 10000
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
+
+# Global application instance
+application = None
+app = Flask(__name__)
 
 # Simple in-memory user state (use database for production)
 user_states = {}  # user_id: last_interaction
 
-async def start(update: Update, context: ContextTypes[ExtBot, dict, dict, dict]) -> None:
-    """Handle /start command with custom text, instructions, and keyboard.
-    Enhanced to check for first-time or returning users."""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /start command with custom text, instructions, and keyboard."""
     user_id = update.effective_user.id
     custom_text = (
         "Welcome to the Money-Making Bot! 🚀\n\n"
@@ -77,7 +78,7 @@ async def start(update: Update, context: ContextTypes[ExtBot, dict, dict, dict])
     
     logger.info(f"Start command executed for user {user_id}")
 
-async def handle_buttons(update: Update, context: ContextTypes[ExtBot, dict, dict, dict]) -> None:
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages from the custom keyboard buttons."""
     user_id = update.effective_user.id
     text = update.message.text
@@ -115,44 +116,56 @@ async def handle_buttons(update: Update, context: ContextTypes[ExtBot, dict, dic
             "Use /start to begin or select from the buttons below."
         )
 
-async def main() -> None:
-    """Set up the bot application and webhook server."""
-    application = Application.builder().token(TOKEN).updater(None).build()
+def init_bot():
+    """Initialize the bot application in a background thread."""
+    global application
+    application = Application.builder().token(TOKEN).read_timeout(10).write_timeout(10).build()
     
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     
-    # Set webhook
-    await application.bot.set_webhook(url=f"{WEBHOOK_URL}{WEBHOOK_PATH}")
+    # Start the application
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+        poll_interval=1.0,
+        timeout=10,
+    )
+
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def webhook():
+    """Handle incoming Telegram webhook updates synchronously."""
+    if application is None:
+        return Response(status=HTTPStatus.SERVICE_UNAVAILABLE)
     
-    # Set up Flask app for webhook
-    flask_app = Flask(__name__)
-    
-    @flask_app.route(WEBHOOK_PATH, methods=["POST"])
-    def webhook() -> Response:
-        """Handle incoming Telegram updates synchronously for Flask."""
-        update_json = request.get_json()
+    try:
+        update_json = request.get_json(force=True)
         if update_json:
             update = Update.de_json(data=update_json, bot=application.bot)
-            asyncio.create_task(application.process_update(update))
+            # Process update in the application (synchronous wrapper)
+            future = asyncio.run_coroutine_threadsafe(
+                application.process_update(update), application.loop
+            )
+            future.result(timeout=10)  # Wait for processing
         return Response(status=HTTPStatus.OK)
-    
-    # Run webserver with Uvicorn for ASGI support
-    config = uvicorn.Config(
-        app=WsgiToAsgi(flask_app),
-        port=PORT,
-        use_colors=False,
-        host="0.0.0.0",
-    )
-    webserver = uvicorn.Server(config)
-    
-    async with application:
-        await application.initialize()
-        await application.start()
-        await webserver.serve()
-        await application.stop()
-        await application.shutdown()
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return Response(status=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+@app.route("/", methods=["GET", "HEAD"])
+def health_check():
+    """Simple health check endpoint for Render."""
+    return Response(status=HTTPStatus.OK)
+
+def run_bot_thread():
+    """Run the bot polling in a separate thread to keep Flask responsive."""
+    init_bot()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Start bot in background thread (for local testing; Render uses gunicorn)
+    bot_thread = threading.Thread(target=run_bot_thread, daemon=True)
+    bot_thread.start()
+    
+    # For Render, use gunicorn to run Flask
+    app.run(host="0.0.0.0", port=PORT, debug=False)
