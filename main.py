@@ -85,7 +85,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Refer & Earn button
     elif text == '👥 Refer & Earn':
         # Replace 'YOUR_BOT_USERNAME' with your actual bot username
-        bot_username = "YOUR_BOT_USERNAME"  # e.g., "MyMoneyBot"
+        bot_username = "CashyAds_bot"  # e.g., "MyMoneyBot"
         referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
         
         response = (
