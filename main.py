@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # This program is dedicated to the public domain under the CC0 license.
-# Simple Telegram bot with custom keyboard for money-making features.
+# Enhanced Telegram bot with improved /start command for money-making features.
 # Uses webhook for Render deployment.
 
 import asyncio
@@ -35,8 +35,13 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://your-app.onrender.com")
 PORT = int(os.environ.get("PORT", 8000))
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 
+# Simple in-memory user state (use database for production)
+user_states = {}  # user_id: last_interaction
+
 async def start(update: Update, context: ContextTypes[ExtBot, dict, dict, dict]) -> None:
-    """Handle /start command with custom text and keyboard."""
+    """Handle /start command with custom text, instructions, and keyboard.
+    Enhanced to check for first-time or returning users."""
+    user_id = update.effective_user.id
     custom_text = (
         "Welcome to the Money-Making Bot! 🚀\n\n"
         "This bot helps you earn money through various features.\n"
@@ -48,6 +53,11 @@ async def start(update: Update, context: ContextTypes[ExtBot, dict, dict, dict])
         "5. Claim daily bonuses and extras.\n\n"
         "Start by pressing a button below!"
     )
+    
+    # Check if user is new or returning
+    if user_id not in user_states or user_states[user_id] == "new":
+        custom_text = "🎉 Great! You're new here. " + custom_text
+        user_states[user_id] = "started"
     
     # Create keyboard with 5 buttons
     keyboard = [
@@ -64,10 +74,14 @@ async def start(update: Update, context: ContextTypes[ExtBot, dict, dict, dict])
         reply_markup=reply_markup,
         parse_mode=ParseMode.HTML,
     )
+    
+    logger.info(f"Start command executed for user {user_id}")
 
 async def handle_buttons(update: Update, context: ContextTypes[ExtBot, dict, dict, dict]) -> None:
     """Handle messages from the custom keyboard buttons."""
+    user_id = update.effective_user.id
     text = update.message.text
+    user_states[user_id] = text  # Track interaction
     
     if text == "Watch Ads":
         await update.message.reply_text(
@@ -96,7 +110,10 @@ async def handle_buttons(update: Update, context: ContextTypes[ExtBot, dict, dic
             "Further instructions pending."
         )
     else:
-        await update.message.reply_text("Please use the buttons below to interact.")
+        # If not a button, remind to use /start
+        await update.message.reply_text(
+            "Use /start to begin or select from the buttons below."
+        )
 
 async def main() -> None:
     """Set up the bot application and webhook server."""
@@ -112,27 +129,30 @@ async def main() -> None:
     # Set up Flask app for webhook
     flask_app = Flask(__name__)
     
-    @flask_app.post(WEBHOOK_PATH)
-    async def webhook() -> Response:
-        """Handle incoming Telegram updates."""
-        update = Update.de_json(data=request.get_json(), bot=application.bot)
-        await application.process_update(update)
+    @flask_app.route(WEBHOOK_PATH, methods=["POST"])
+    def webhook() -> Response:
+        """Handle incoming Telegram updates synchronously for Flask."""
+        update_json = request.get_json()
+        if update_json:
+            update = Update.de_json(data=update_json, bot=application.bot)
+            asyncio.create_task(application.process_update(update))
         return Response(status=HTTPStatus.OK)
     
-    # Run webserver
-    webserver = uvicorn.Server(
-        config=uvicorn.Config(
-            app=WsgiToAsgi(flask_app),
-            port=PORT,
-            use_colors=False,
-            host="0.0.0.0",  # Bind to all interfaces for Render
-        )
+    # Run webserver with Uvicorn for ASGI support
+    config = uvicorn.Config(
+        app=WsgiToAsgi(flask_app),
+        port=PORT,
+        use_colors=False,
+        host="0.0.0.0",
     )
+    webserver = uvicorn.Server(config)
     
     async with application:
+        await application.initialize()
         await application.start()
         await webserver.serve()
         await application.stop()
+        await application.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())
