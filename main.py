@@ -6,10 +6,10 @@
 import logging
 import os
 import threading
+import asyncio
 from http import HTTPStatus
 
 from flask import Flask, request, Response
-import requests
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode
@@ -119,13 +119,25 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def init_bot():
     """Initialize the bot application in a background thread."""
     global application
+    if TOKEN is None:
+        logger.error("TELEGRAM_BOT_TOKEN not set in environment variables.")
+        return
+    
     application = Application.builder().token(TOKEN).read_timeout(10).write_timeout(10).build()
     
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     
-    # Start the application
+    # Set webhook if URL is provided
+    if WEBHOOK_URL:
+        try:
+            asyncio.run(application.bot.set_webhook(url=f"{WEBHOOK_URL}{WEBHOOK_PATH}"))
+            logger.info(f"Webhook set to {WEBHOOK_URL}{WEBHOOK_PATH}")
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {e}")
+    
+    # Start polling as fallback
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
@@ -144,10 +156,10 @@ def webhook():
         if update_json:
             update = Update.de_json(data=update_json, bot=application.bot)
             # Process update in the application (synchronous wrapper)
-            future = asyncio.run_coroutine_threadsafe(
-                application.process_update(update), application.loop
-            )
-            future.result(timeout=10)  # Wait for processing
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(application.process_update(update))
+            loop.close()
         return Response(status=HTTPStatus.OK)
     except Exception as e:
         logger.error(f"Webhook error: {e}")
