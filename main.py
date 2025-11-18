@@ -1,4 +1,6 @@
 import logging
+import os
+import asyncio
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -7,6 +9,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 # Define keyboard layout
 keyboard = [
@@ -16,8 +19,8 @@ keyboard = [
 ]
 reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
-# Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /start command."""
     welcome_text = (
         "Welcome to the Money Making Bot!\n\n"
         "Earn money by watching ads, referring friends, and more.\n"
@@ -25,8 +28,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# Button handler
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle button presses."""
     text = update.message.text
 
     if text == 'Watch Ads':
@@ -42,15 +45,33 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await update.message.reply_text("Please use the buttons below.", reply_markup=reply_markup)
 
-def main():
-    # Get the bot token from environment variables for Render
-    import os
-    TOKEN = os.environ.get('TELEGRAM_TOKEN', 'YOUR_TOKEN')
+async def main() -> None:
+    """Start the bot."""
+    # Get token from environment variable
+    token = os.environ.get('TELEGRAM_TOKEN')
+    if not token:
+        logger.error("TELEGRAM_TOKEN environment variable is required!")
+        return
 
-    application = Application.builder().token(TOKEN).build()
+    # Create application
+    application = Application.builder().token(token).build()
+
+    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
-    application.run_polling()
+
+    # Run bot with proper async context
+    async with application:
+        logger.info("Starting bot...")
+        await application.start()
+        await application.updater.start_polling()
+        
+        # Keep running until stopped
+        while True:
+            await asyncio.sleep(1)
+        
+        await application.updater.stop()
+        await application.stop()
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
