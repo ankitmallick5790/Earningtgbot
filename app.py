@@ -1,11 +1,18 @@
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from fastapi import FastAPI, Request
+from telegram import Update, Bot, ReplyKeyboardMarkup
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters, ContextTypes
+import os
 
-# Custom keyboard buttons
+app = FastAPI()
+
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+bot = Bot(token=TELEGRAM_TOKEN)
+dispatcher = Dispatcher(bot, None, workers=0)
+
 custom_keyboard = [['Watch Ads', 'Balance'], ['Refer and Earn', 'Bonus', 'Extra']]
+reply_markup = ReplyKeyboardMarkup(custom_keyboard, resize_keyboard=True)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Custom welcome message and instruction
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = (
         "Welcome to the Money Making Bot!\nHere are your options:\n\n"
         "1. Watch Ads - Earn money by watching ads\n"
@@ -14,15 +21,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "4. Bonus - Claim your bonuses\n"
         "5. Extra - Additional features"
     )
-    
-    # Create ReplyKeyboardMarkup with custom buttons
-    reply_markup = ReplyKeyboardMarkup(custom_keyboard, resize_keyboard=True)
-
-    # Send the welcome message with custom keyboard
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Placeholder handling for each button press
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == 'Watch Ads':
         await update.message.reply_text("Feature to watch ads coming soon.")
@@ -37,16 +38,21 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         await update.message.reply_text("Please use the buttons below.")
 
-if __name__ == '__main__':
-    import os
+dispatcher.add_handler(CommandHandler('start', start))
+dispatcher.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_button))
 
-    token = os.environ.get('TELEGRAM_TOKEN')
-    assert token, 'TELEGRAM_TOKEN environment variable missing'
+@app.post('/webhook')
+async def webhook(request: Request):
+    data = await request.json()
+    update = Update.de_json(data, bot)
+    await dispatcher.process_update(update)
+    return {"ok": True}
 
-    app = ApplicationBuilder().token(token).build()
+@app.get('/')
+async def root():
+    return {"message": "Telegram Money Making Bot webhook is running."}
 
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_button))
-
-    # Run the bot
-    app.run_polling()
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get('PORT', 10000))
+    uvicorn.run(app, host='0.0.0.0', port=port)
