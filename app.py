@@ -1,5 +1,4 @@
 import os
-import asyncio
 from fastapi import FastAPI, Request, Response
 from telegram import Update, Bot, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
@@ -9,12 +8,9 @@ app = FastAPI()
 
 # Get environment variables
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # e.g., https://yourapp.onrender.com/webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# Initialize bot
-bot = Bot(token=TOKEN)
-
-# Create Application instance
+# Create Application instance (this will create and initialize the bot internally)
 ptb_app = Application.builder().token(TOKEN).updater(None).build()
 
 # Keyboard buttons
@@ -60,12 +56,12 @@ ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handl
 async def webhook_endpoint(request: Request):
     try:
         json_data = await request.json()
-        update = Update.de_json(json_data, bot)
+        update = Update.de_json(json_data, ptb_app.bot)
         await ptb_app.process_update(update)
         return Response(status_code=200)
     except Exception as e:
-        print(f"Error: {e}")
-        return Response(status_code=500)
+        print(f"Error processing update: {e}")
+        return Response(status_code=200)  # Return 200 even on error to avoid Telegram retries
 
 
 @app.get("/")
@@ -75,16 +71,16 @@ async def root():
 
 @app.on_event("startup")
 async def on_startup():
-    # Set webhook on startup
+    # Initialize and start the application
+    await ptb_app.initialize()
+    await ptb_app.start()
+    
+    # Set webhook
     if WEBHOOK_URL:
-        await bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=True)
+        await ptb_app.bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=True)
         print(f"✅ Webhook set to: {WEBHOOK_URL}")
     else:
         print("⚠️ WEBHOOK_URL not set!")
-    
-    # Initialize application
-    await ptb_app.initialize()
-    await ptb_app.start()
 
 
 @app.on_event("shutdown")
