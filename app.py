@@ -1,13 +1,12 @@
 from fastapi import FastAPI, Request
 from telegram import Update, Bot, ReplyKeyboardMarkup
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import os
 
 app = FastAPI()
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = Bot(token=TELEGRAM_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=0)
 
 custom_keyboard = [['Watch Ads', 'Balance'], ['Refer and Earn', 'Bonus', 'Extra']]
 reply_markup = ReplyKeyboardMarkup(custom_keyboard, resize_keyboard=True)
@@ -38,21 +37,22 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Please use the buttons below.")
 
-dispatcher.add_handler(CommandHandler('start', start))
-dispatcher.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_button))
+app_telegram = Application.builder().token(TELEGRAM_TOKEN).build()
+app_telegram.add_handler(CommandHandler('start', start))
+app_telegram.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_button))
 
-@app.post('/webhook')
-async def webhook(request: Request):
+@app.post("/webhook")
+async def webhook_handler(request: Request):
     data = await request.json()
     update = Update.de_json(data, bot)
-    await dispatcher.process_update(update)
+    await app_telegram.process_update(update)
     return {"ok": True}
 
-@app.get('/')
+@app.get("/")
 async def root():
     return {"message": "Telegram Money Making Bot webhook is running."}
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get('PORT', 10000))
-    uvicorn.run(app, host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", "10000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
