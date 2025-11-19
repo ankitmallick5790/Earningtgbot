@@ -1,65 +1,99 @@
 import os
-from fastapi import FastAPI, Request
+import asyncio
+from fastapi import FastAPI, Request, Response
 from telegram import Update, Bot, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+# Initialize FastAPI
 app = FastAPI()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+# Get environment variables
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # e.g., https://yourapp.onrender.com/webhook
 
-bot = Bot(token=TELEGRAM_TOKEN)
+# Initialize bot
+bot = Bot(token=TOKEN)
 
-custom_keyboard = [['Watch Ads', 'Balance'], ['Refer and Earn', 'Bonus', 'Extra']]
-reply_markup = ReplyKeyboardMarkup(custom_keyboard, resize_keyboard=True)
+# Create Application instance
+ptb_app = Application.builder().token(TOKEN).updater(None).build()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "Welcome to the Money Making Bot!\n"
-        "Here are your options:\n\n"
-        "1. Watch Ads - Earn money by watching ads\n"
-        "2. Balance - Check your current balance\n"
-        "3. Refer and Earn - Get bonuses by referring friends\n"
-        "4. Bonus - Claim your bonuses\n"
-        "5. Extra - Additional features"
+# Keyboard buttons
+keyboard = [['Watch Ads', 'Balance'], ['Refer and Earn', 'Bonus', 'Extra']]
+markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+# Command handlers
+async def start_command(update: Update, context):
+    await update.message.reply_text(
+        "💰 Welcome to Money Making Bot!\n\n"
+        "Choose an option below:",
+        reply_markup=markup
     )
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def button_handler(update: Update, context):
     text = update.message.text
-    responses = {
-        "Watch Ads": "Feature to watch ads coming soon.",
-        "Balance": "Your balance is currently 0.",
-        "Refer and Earn": "Refer your friends using your unique link!",
-        "Bonus": "Claim your daily bonus here.",
-        "Extra": "Extra features will be available soon."
-    }
-    await update.message.reply_text(responses.get(text, "Please use the buttons below."))
+    
+    if text == 'Watch Ads':
+        response = "📺 Watch ads feature coming soon!"
+    elif text == 'Balance':
+        response = "💵 Your balance: $0.00"
+    elif text == 'Refer and Earn':
+        response = "👥 Refer friends and earn rewards!"
+    elif text == 'Bonus':
+        response = "🎁 Daily bonus feature coming soon!"
+    elif text == 'Extra':
+        response = "⚡ Extra features coming soon!"
+    else:
+        response = "Please use the buttons below ⬇️"
+    
+    await update.message.reply_text(response)
 
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
+# Register handlers
+ptb_app.add_handler(CommandHandler("start", start_command))
+ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
+
+
+# FastAPI routes
 @app.post("/webhook")
-async def webhook(request: Request):
-    data = await request.json()
-    update = Update.de_json(data, bot)
-    await application.process_update(update)
-    return {"ok": True}
+async def webhook_endpoint(request: Request):
+    try:
+        json_data = await request.json()
+        update = Update.de_json(json_data, bot)
+        await ptb_app.process_update(update)
+        return Response(status_code=200)
+    except Exception as e:
+        print(f"Error: {e}")
+        return Response(status_code=500)
+
 
 @app.get("/")
 async def root():
-    return {"message": "Telegram Money Making Bot webhook is running."}
+    return {"status": "Bot is running", "webhook": WEBHOOK_URL}
 
-def set_webhook():
+
+@app.on_event("startup")
+async def on_startup():
+    # Set webhook on startup
     if WEBHOOK_URL:
-        bot.set_webhook(WEBHOOK_URL)
-        print(f"Webhook set to {WEBHOOK_URL}")
+        await bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=True)
+        print(f"✅ Webhook set to: {WEBHOOK_URL}")
     else:
-        print("WEBHOOK_URL is not set. Please configure it in environment variables.")
+        print("⚠️ WEBHOOK_URL not set!")
+    
+    # Initialize application
+    await ptb_app.initialize()
+    await ptb_app.start()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await ptb_app.stop()
+    await ptb_app.shutdown()
+
 
 if __name__ == "__main__":
-    set_webhook()
     import uvicorn
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
